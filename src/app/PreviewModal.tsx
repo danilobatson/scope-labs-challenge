@@ -9,6 +9,10 @@ interface Props {
   applying?: boolean;
 }
 
+/**
+ * Maps internal camelCase field names to human-readable labels for the diff display.
+ * Used in DiffRow to show "End Time" instead of "endTime" when showing field changes.
+ */
 const FIELD_LABELS: Record<string, string> = {
   theaterName: "Theater",
   movieTitle: "Movie Title",
@@ -21,6 +25,7 @@ const FIELD_LABELS: Record<string, string> = {
   lastUpdated: "Last Updated",
 };
 
+/** Compact row showing a showtime's key info. Used in the ADD and ARCHIVE sections. */
 function ShowtimeRow({ data }: { data: ShowtimeData }) {
   return (
     <div className="grid grid-cols-4 gap-2 text-sm py-2">
@@ -41,6 +46,11 @@ function ShowtimeRow({ data }: { data: ShowtimeData }) {
   );
 }
 
+/**
+ * Row showing field-level diffs for an UPDATE action.
+ * Each changed field is displayed as: "Field Label: old value → new value"
+ * with strikethrough on old values (red) and bold on new values (green).
+ */
 function DiffRow({ data, diffs }: { data: ShowtimeData; diffs: FieldDiff[] }) {
   return (
     <div className="py-2">
@@ -63,6 +73,16 @@ function DiffRow({ data, diffs }: { data: ShowtimeData; diffs: FieldDiff[] }) {
   );
 }
 
+/**
+ * Modal that displays the reconciliation preview after a CSV upload.
+ * Shows three color-coded sections:
+ *   - Green (ADD):    New showtimes that will be created
+ *   - Amber (UPDATE): Existing showtimes with field-level changes
+ *   - Red (ARCHIVE):  Existing showtimes that will be soft-deleted
+ *
+ * No database changes happen until the user clicks "Apply Changes".
+ * If no changes are detected, shows a message and only offers "Cancel".
+ */
 export default function PreviewModal({ preview, onApply, onCancel, applying }: Props) {
   const { adds, updates, archives } = preview;
   const totalChanges = adds.length + updates.length + archives.length;
@@ -70,6 +90,7 @@ export default function PreviewModal({ preview, onApply, onCancel, applying }: P
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
       <div className="bg-white rounded-lg shadow-xl max-w-3xl w-full max-h-[85vh] overflow-hidden flex flex-col">
+        {/* Modal header with total change count */}
         <div className="p-6 border-b">
           <h2 className="text-xl font-bold text-gray-900">Preview Changes</h2>
           <p className="text-sm text-gray-500 mt-1">
@@ -77,8 +98,9 @@ export default function PreviewModal({ preview, onApply, onCancel, applying }: P
           </p>
         </div>
 
+        {/* Scrollable content area with color-coded change sections */}
         <div className="overflow-y-auto flex-1 p-6 space-y-6">
-          {/* Adds */}
+          {/* New showtimes to be added (green) */}
           {adds.length > 0 && (
             <div>
               <h3 className="text-sm font-semibold text-green-800 bg-green-100 px-3 py-2 rounded-t border border-green-200">
@@ -92,7 +114,7 @@ export default function PreviewModal({ preview, onApply, onCancel, applying }: P
             </div>
           )}
 
-          {/* Updates */}
+          {/* Existing showtimes with field changes (amber) */}
           {updates.length > 0 && (
             <div>
               <h3 className="text-sm font-semibold text-amber-800 bg-amber-100 px-3 py-2 rounded-t border border-amber-200">
@@ -106,7 +128,7 @@ export default function PreviewModal({ preview, onApply, onCancel, applying }: P
             </div>
           )}
 
-          {/* Archives */}
+          {/* Showtimes to be archived / soft-deleted (red) */}
           {archives.length > 0 && (
             <div>
               <h3 className="text-sm font-semibold text-red-800 bg-red-100 px-3 py-2 rounded-t border border-red-200">
@@ -127,6 +149,7 @@ export default function PreviewModal({ preview, onApply, onCancel, applying }: P
           )}
         </div>
 
+        {/* Modal footer with Cancel and Apply buttons */}
         <div className="p-6 border-t flex justify-end gap-3">
           <button
             onClick={onCancel}
@@ -135,6 +158,7 @@ export default function PreviewModal({ preview, onApply, onCancel, applying }: P
           >
             Cancel
           </button>
+          {/* Only show Apply button when there are actual changes to apply */}
           {totalChanges > 0 && (
             <button
               onClick={onApply}

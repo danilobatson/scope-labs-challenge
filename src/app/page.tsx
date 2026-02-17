@@ -1,9 +1,14 @@
 "use client";
 
 import { useState, useEffect, useCallback, useRef } from "react";
-import { ReconciliationResult } from "@/lib/types";
+import {
+  ReconciliationResult,
+  ApiErrorResponse,
+  SeedResponse,
+} from "@/lib/types";
 import PreviewModal from "./PreviewModal";
 
+/** Shape of a showtime record as returned by the GET /api/showtimes endpoint. */
 interface Showtime {
   id: number;
   theaterName: string;
@@ -18,6 +23,7 @@ interface Showtime {
   status: string;
 }
 
+/** Columns the table can be sorted by. Maps to Prisma model field names. */
 type SortField =
   | "movieTitle"
   | "auditorium"
@@ -27,29 +33,66 @@ type SortField =
   | "format"
   | "rating";
 
+// Polling interval for auto-refreshing the table (catches external changes like curl calls)
 const POLL_INTERVAL_MS = 5000;
+// Delay before filter input triggers a new API request (avoids hammering the server on every keystroke)
 const FILTER_DEBOUNCE_MS = 300;
+// How long success/error toast messages are shown before auto-dismissing
 const MESSAGE_AUTO_DISMISS_MS = 5000;
 
+/** Formats an ISO date string into a human-readable format like "Mar 15, 6:00 PM". */
+function formatDate(dateStr: string): string {
+  return new Date(dateStr).toLocaleString("en-US", {
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+    hour12: true,
+  });
+}
+
+/**
+ * Main page component — renders the showtimes admin dashboard.
+ *
+ * Key behaviors:
+ *   - Fetches and displays active showtimes in a sortable, filterable table
+ *   - Polls every 5s for external changes (paused while preview modal is open)
+ *   - Supports CSV upload → preview → apply two-phase reconciliation flow
+ *   - Provides seed and clear actions for demo/testing
+ */
 export default function Home() {
   const [showtimes, setShowtimes] = useState<Showtime[]>([]);
+  // `initialLoad` prevents showing "No showtimes" flash before the first fetch completes.
+  // Unlike a generic `loading` flag, this only affects the first render — subsequent
+  // fetches (from polling or sort/filter changes) don't trigger a loading state.
   const [initialLoad, setInitialLoad] = useState(true);
   const [filter, setFilter] = useState("");
+  // Debounced version of filter — only updates after FILTER_DEBOUNCE_MS of inactivity,
+  // preventing excessive API calls while the user is still typing
   const [debouncedFilter, setDebouncedFilter] = useState("");
   const [sortField, setSortField] = useState<SortField>("startTime");
   const [sortOrder, setSortOrder] = useState<"asc" | "desc">("asc");
+  // Holds the reconciliation preview returned by /upload. When non-null, the PreviewModal is shown.
   const [preview, setPreview] = useState<ReconciliationResult | null>(null);
+  // Per-action loading states — each button gets its own flag so the UI accurately reflects
+  // which operation is in progress (prevents confusion when multiple actions are available)
   const [uploading, setUploading] = useState(false);
   const [applying, setApplying] = useState(false);
   const [seeding, setSeeding] = useState(false);
   const [clearing, setClearing] = useState(false);
+  // Toast message shown after actions complete (success or error)
   const [message, setMessage] = useState<{
     text: string;
     type: "success" | "error";
   } | null>(null);
+  // Ref to track the auto-dismiss timer — using a ref instead of state because we
+  // need to clear the previous timer without triggering a re-render
   const dismissTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // Auto-dismiss messages
+  /**
+   * Shows a toast message that auto-dismisses after MESSAGE_AUTO_DISMISS_MS.
+   * Clears any existing timer first so rapid successive messages don't stack.
+   */
   const showMessage = useCallback(
     (text: string, type: "success" | "error") => {
       if (dismissTimer.current) clearTimeout(dismissTimer.current);
@@ -62,12 +105,19 @@ export default function Home() {
     []
   );
 
-  // Debounce filter input
+  // Debounce the filter input: wait FILTER_DEBOUNCE_MS after the user stops typing
+  // before updating debouncedFilter, which triggers a new API request via fetchShowtimes
   useEffect(() => {
     const timer = setTimeout(() => setDebouncedFilter(filter), FILTER_DEBOUNCE_MS);
     return () => clearTimeout(timer);
   }, [filter]);
 
+  /**
+   * Fetches showtimes from the API with current sort/filter params.
+   * Wrapped in useCallback so it can be used as a dependency for both the
+   * sort/filter effect and the polling interval without causing infinite loops.
+   * Errors are silently swallowed during polling to avoid distracting the user.
+   */
   const fetchShowtimes = useCallback(async () => {
     try {
       const params = new URLSearchParams({
@@ -76,27 +126,32 @@ export default function Home() {
         filter: debouncedFilter,
       });
       const res = await fetch(`/api/showtimes?${params}`);
-      const data = await res.json();
+      const data: Showtime[] = await res.json();
       setShowtimes(data);
     } catch {
-      // Only show error on user-initiated fetches, not polling
+      // Silently ignore errors during polling — network blips shouldn't
+      // interrupt the user's workflow with error toasts every 5 seconds
     } finally {
       setInitialLoad(false);
     }
   }, [sortField, sortOrder, debouncedFilter]);
 
-  // Fetch on sort/filter change
+  // Re-fetch whenever sort or filter changes
   useEffect(() => {
     fetchShowtimes();
   }, [fetchShowtimes]);
 
-  // Poll for external changes (paused while preview modal is open)
+  // Poll for external changes every POLL_INTERVAL_MS.
+  // Polling is paused while the preview modal is open to prevent stale-state conflicts —
+  // if the underlying data changed during preview, the reconciliation result could
+  // be out of date, leading to confusing apply behavior.
   useEffect(() => {
     if (preview) return;
     const interval = setInterval(fetchShowtimes, POLL_INTERVAL_MS);
     return () => clearInterval(interval);
   }, [fetchShowtimes, preview]);
 
+  /** Toggles sort direction if same column clicked, otherwise sorts by new column ascending. */
   const handleSort = (field: SortField) => {
     if (sortField === field) {
       setSortOrder((prev) => (prev === "asc" ? "desc" : "asc"));
@@ -106,11 +161,17 @@ export default function Home() {
     }
   };
 
+  /** Returns a ▲/▼ indicator for the currently sorted column, empty string for others. */
   const sortIndicator = (field: SortField) => {
     if (sortField !== field) return "";
     return sortOrder === "asc" ? " ▲" : " ▼";
   };
 
+  /**
+   * Handles CSV file selection. Sends the file to /upload, which returns a
+   * reconciliation preview (no DB changes). The preview is then shown in the modal.
+   * Resets the file input after upload so the same file can be re-selected.
+   */
   const handleUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -124,8 +185,11 @@ export default function Home() {
         method: "POST",
         body: formData,
       });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error);
+      if (!res.ok) {
+        const err: ApiErrorResponse = await res.json();
+        throw new Error(err.error);
+      }
+      const data: ReconciliationResult = await res.json();
       setPreview(data);
     } catch (err) {
       showMessage(
@@ -134,10 +198,15 @@ export default function Home() {
       );
     } finally {
       setUploading(false);
+      // Reset the file input so uploading the same file again triggers onChange
       e.target.value = "";
     }
   };
 
+  /**
+   * Sends the reconciliation preview to /apply, which executes all changes
+   * (adds, updates, archives) in a single database transaction.
+   */
   const handleApply = async () => {
     if (!preview) return;
     setApplying(true);
@@ -148,8 +217,10 @@ export default function Home() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(preview),
       });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error);
+      if (!res.ok) {
+        const err: ApiErrorResponse = await res.json();
+        throw new Error(err.error);
+      }
       setPreview(null);
       showMessage("Changes applied successfully", "success");
       fetchShowtimes();
@@ -163,14 +234,17 @@ export default function Home() {
     }
   };
 
+  /** Hard-deletes all showtimes after user confirmation. Used for full schedule resets. */
   const handleClear = async () => {
     if (!confirm("Are you sure you want to clear all showtimes?")) return;
     setClearing(true);
     setMessage(null);
     try {
       const res = await fetch("/api/showtimes/clear", { method: "POST" });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error);
+      if (!res.ok) {
+        const err: ApiErrorResponse = await res.json();
+        throw new Error(err.error);
+      }
       showMessage("Schedule cleared", "success");
       fetchShowtimes();
     } catch (err) {
@@ -183,13 +257,17 @@ export default function Home() {
     }
   };
 
+  /** Populates the database with sample showtimes for demo/testing. */
   const handleSeed = async () => {
     setSeeding(true);
     setMessage(null);
     try {
       const res = await fetch("/api/showtimes/seed", { method: "POST" });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error);
+      if (!res.ok) {
+        const err: ApiErrorResponse = await res.json();
+        throw new Error(err.error);
+      }
+      const data: SeedResponse = await res.json();
       showMessage(`Seeded ${data.count} showtimes`, "success");
       fetchShowtimes();
     } catch (err) {
@@ -202,16 +280,6 @@ export default function Home() {
     }
   };
 
-  const formatDate = (dateStr: string) => {
-    return new Date(dateStr).toLocaleString("en-US", {
-      month: "short",
-      day: "numeric",
-      hour: "numeric",
-      minute: "2-digit",
-      hour12: true,
-    });
-  };
-
   return (
     <div className="min-h-screen bg-gray-50 p-6">
       <div className="max-w-7xl mx-auto">
@@ -219,8 +287,9 @@ export default function Home() {
           Theater Showtimes Admin
         </h1>
 
-        {/* Action bar */}
+        {/* Action bar — Upload CSV, Seed, Clear buttons on the left; filter input on the right */}
         <div className="flex flex-wrap gap-3 mb-6 items-center">
+          {/* CSV upload uses a styled <label> wrapping a hidden file input for a button-like appearance */}
           <label
             className={`px-4 py-2 rounded text-sm font-medium text-white ${
               uploading
@@ -259,6 +328,7 @@ export default function Home() {
           >
             {clearing ? "Clearing..." : "Clear Schedule"}
           </button>
+          {/* Spacer pushes the filter input to the right */}
           <div className="flex-1" />
           <input
             type="text"
@@ -269,7 +339,7 @@ export default function Home() {
           />
         </div>
 
-        {/* Status message */}
+        {/* Toast-style status message — auto-dismisses after 5 seconds or can be manually closed */}
         {message && (
           <div
             className={`mb-4 p-3 rounded text-sm flex justify-between items-center ${
@@ -288,7 +358,7 @@ export default function Home() {
           </div>
         )}
 
-        {/* Showtimes table */}
+        {/* Showtimes table — sortable by clicking column headers */}
         <div className="bg-white rounded-lg shadow overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
@@ -355,7 +425,8 @@ export default function Home() {
           {showtimes.length} showtime{showtimes.length !== 1 ? "s" : ""} total
         </div>
 
-        {/* Preview modal */}
+        {/* Preview modal — shown after CSV upload with reconciliation results.
+            Polling is paused while this is open (see the useEffect above). */}
         {preview && (
           <PreviewModal
             preview={preview}

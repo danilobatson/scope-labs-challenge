@@ -1,6 +1,13 @@
 import { NextResponse } from "next/server";
+import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 
+/**
+ * Sample showtime data matching the "Existing Dataset" from the project spec.
+ * Includes 6 movies at Downtown Cinema 7 with various formats and ratings.
+ * Note: Dune: Part Two has two entries (different start times) to test the
+ * reconciliation algorithm's handling of the same movie at different times.
+ */
 const seedData = [
   {
     theaterName: "Downtown Cinema 7",
@@ -76,12 +83,20 @@ const seedData = [
   },
 ];
 
+/**
+ * POST /api/showtimes/seed
+ *
+ * Populates the database with sample showtime data for demo/testing purposes.
+ * Clears all existing records first (hard delete) to ensure a clean starting
+ * state, then bulk-inserts the seed data. This is idempotent — calling it
+ * multiple times always produces the same result.
+ */
 export async function POST() {
   try {
-    // Clear existing data first
+    // Clear all existing data first for a clean reset
     await prisma.showtime.deleteMany({});
 
-    // Seed with demo data
+    // Bulk insert all seed records in a single query
     await prisma.showtime.createMany({
       data: seedData,
     });
@@ -92,8 +107,17 @@ export async function POST() {
     });
   } catch (error) {
     console.error("Seed error:", error);
+
+    if (error instanceof Prisma.PrismaClientInitializationError) {
+      return NextResponse.json(
+        { error: "Database connection failed. Check that DATABASE_URL is set correctly in .env." },
+        { status: 503 }
+      );
+    }
+
+    const message = error instanceof Error ? error.message : "Unknown error";
     return NextResponse.json(
-      { error: "Failed to seed data" },
+      { error: `Failed to seed data: ${message}` },
       { status: 500 }
     );
   }
