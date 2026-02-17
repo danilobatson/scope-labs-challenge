@@ -20,6 +20,26 @@ yarn dev
 
 Open [http://localhost:3000](http://localhost:3000). Click **Seed Demo Data** to populate the database with sample showtimes, then upload a CSV to test the reconciliation flow.
 
+## Project Structure
+
+```text
+src/
+├── lib/
+│   ├── normalize.ts     # Title normalization for fuzzy matching
+│   ├── reconcile.ts     # Core reconciliation algorithm (add/update/archive)
+│   ├── types.ts         # Shared TypeScript interfaces
+│   └── prisma.ts        # Prisma client singleton
+├── app/
+│   ├── page.tsx         # Main dashboard UI (table, actions, polling)
+│   ├── PreviewModal.tsx # Preview modal for reviewing changes before apply
+│   └── api/showtimes/
+│       ├── route.ts     # GET — list active showtimes (sort/filter)
+│       ├── upload/      # POST — parse CSV and return reconciliation preview
+│       ├── apply/       # POST — apply preview changes in a transaction
+│       ├── clear/       # POST — hard-delete all showtimes
+│       └── seed/        # POST — populate demo data
+```
+
 ## Architecture Decisions
 
 - **Next.js App Router** — Full-stack framework with API routes co-located alongside the UI. Server-side API routes handle all database operations.
@@ -29,6 +49,17 @@ Open [http://localhost:3000](http://localhost:3000). Click **Seed Demo Data** to
 - **Polling for freshness** — The table auto-refreshes every 5 seconds via polling, so changes made externally (e.g., via API calls or another session) appear without manual refresh. Polling pauses while the preview modal is open to avoid stale-state conflicts.
 - **Deduplication** — Duplicate CSV rows (same normalized title + start time) are deduped before reconciliation. First occurrence wins.
 - **Soft delete for archives** — Archived showtimes have `status: "archived"` rather than being deleted, preserving history. The "Clear Schedule" action hard-deletes all records for a full reset.
+
+## Additional Features
+
+Beyond the core requirements, the following UX improvements were added:
+
+- **Seed Demo Data button** — One-click database population with sample showtimes matching the project spec, for quick setup and testing.
+- **Auto-refresh via polling** — The showtimes table refreshes every 5 seconds so external changes (e.g., via `curl` or another session) appear without a manual page reload. Polling pauses while the preview modal is open.
+- **Debounced filter input** — Title filter waits 300ms after the user stops typing before querying the API, reducing unnecessary network requests.
+- **Per-button loading states** — Each action button (Upload, Seed, Clear, Apply) has its own loading indicator so the user knows exactly which operation is in progress.
+- **Auto-dismissing toast messages** — Success/error messages disappear after 5 seconds or can be manually dismissed.
+- **Resilient CSV parsing** — Non-fatal Papa Parse warnings (e.g., trailing delimiters) are tolerated; only structural errors (delimiter/field mismatch) reject the upload. The `formData()` call is also wrapped in its own try-catch to handle non-multipart requests gracefully.
 
 ## What I'd Improve With More Time
 
