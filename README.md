@@ -1,36 +1,39 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Theater Showtimes Admin
 
-## Getting Started
+Admin tool for ingesting a partner's CSV of showtimes and reconciling it against the current schedule for a single theater.
 
-First, run the development server:
+## Running Locally
 
 ```bash
-npm run dev
-# or
+# Install dependencies
+yarn install
+
+# Set your Neon PostgreSQL connection string
+# Edit .env and set DATABASE_URL
+
+# Push the schema to your database
+npx prisma db push
+
+# Start the dev server
 yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Open [http://localhost:3000](http://localhost:3000). Click **Seed Demo Data** to populate the database with sample showtimes, then upload a CSV to test the reconciliation flow.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## Architecture Decisions
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+- **Next.js App Router** — Full-stack framework with API routes co-located alongside the UI. Server-side API routes handle all database operations.
+- **Prisma v6 + Neon PostgreSQL** — Type-safe ORM with serverless-friendly PostgreSQL. Schema-first approach makes the data model explicit.
+- **Reconciliation algorithm** — The core business logic normalizes movie titles (strip punctuation, lowercase, convert number words to digits) and matches on `normalizedTitle + startTime` as the composite key. This handles messy real-world data like "DUNE PART 2" vs "Dune: Part Two".
+- **Preview before apply** — Upload returns a preview (adds/updates/archives) without modifying the database. Changes are only applied when the user explicitly confirms. All mutations happen in a single Prisma transaction.
+- **Client-side state** — The preview modal lives in client-side state rather than a separate page/route, keeping the UX simple and avoiding unnecessary navigation.
 
-## Learn More
+## What I'd Improve With More Time
 
-To learn more about Next.js, take a look at the following resources:
-
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
-
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+- Add pagination to the showtimes table for large datasets
+- Add unit tests for the `normalizeTitle` and `reconcile` functions
+- Add a history/audit log of past CSV imports
+- Support undo/rollback of applied changes
+- Add loading states and optimistic updates for better UX
+- Add CSV validation with more detailed error messages per row
+- Implement role-based access control for the admin actions
