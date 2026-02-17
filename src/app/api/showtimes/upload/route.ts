@@ -5,8 +5,14 @@ import { reconcile } from "@/lib/reconcile";
 import { ShowtimeRow } from "@/lib/types";
 
 export async function POST(request: NextRequest) {
+  let formData: FormData;
   try {
-    const formData = await request.formData();
+    formData = await request.formData();
+  } catch {
+    return NextResponse.json({ error: "No file uploaded" }, { status: 400 });
+  }
+
+  try {
     const file = formData.get("file") as File | null;
 
     if (!file) {
