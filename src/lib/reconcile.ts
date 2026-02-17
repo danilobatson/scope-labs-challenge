@@ -80,9 +80,12 @@ export function reconcile(
   csvRows: ShowtimeRow[],
   existingShowtimes: Showtime[]
 ): ReconciliationResult {
-  // Step 1: Parse & clean CSV rows
+  // Step 1: Parse & clean CSV rows (trim before truthiness check so whitespace-only values are excluded)
   const cleanedRows = csvRows
-    .filter((row) => row.movie_title && row.start_time)
+    .filter(
+      (row) =>
+        (row.movie_title || "").trim() && (row.start_time || "").trim()
+    )
     .map(csvRowToShowtimeData);
 
   // Step 2: Deduplicate CSV rows by normalized title + start_time
